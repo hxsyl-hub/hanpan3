@@ -1,0 +1,9 @@
+{
+  "NG_ColdJoint": 0,
+  "NG_ExcessSolder": 1,
+  "NG_Misalignment": 2,
+  "NG_MissingSolder": 3,
+  "NG_PadContamination": 4,
+  "NG_PadDiscoloration": 5,
+  "OK": 6
+}

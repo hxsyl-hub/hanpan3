@@ -1,0 +1,71 @@
+{
+  "_说明": "类别映射表：把委托方给的 7 个文件夹重映射到工业标准英文类别。依据：IPC-A-610 验收体系 + 工业 AOI 通用缺陷分类。confidence: high=图像证据充分, mid=推测, low=仅猜测。改完这个文件重跑 02_划分数据集.py + 03_离线数据增强.py 即可。",
+  "_命名约定": "OK = 合格；NG_ 前缀 = 不合格（工业上先判 OK/NG，再对 NG 归因）；PascalCase 英文术语",
+  "_参考": "IPC-A-610 (Acceptability of Electronic Assemblies) Class 1/2/3；AOI 缺陷族：cold/false joint, missing solder, excess solder, misalignment, contamination",
+  "_工艺特点": "本数据集是『引线-焊盘』焊接（有 lead flatten 概念，接近电阻焊/压焊），非 SMT 贴片；OK 的判据是引线压在焊盘上且焊点明显",
+  "映射": {
+    "OK": {
+      "来源": ["OK"],
+      "中文": "合格",
+      "英文全称": "Acceptable / Good joint",
+      "confidence": "high",
+      "工业依据": "IPC-A-610 Target condition：焊点明显、润湿良好、引线压扁到位",
+      "图像证据": "引线平贴焊盘，锡料包裹引线端部，焊盘亮"
+    },
+    "NG_MissingSolder": {
+      "来源": ["XH1"],
+      "中文": "无焊点",
+      "英文全称": "Missing solder joint",
+      "confidence": "mid",
+      "工业依据": "AOI『漏焊/无焊点』：引线上无焊料，未形成结合",
+      "图像证据": "引线光秃竖直，表面无锡、无润湿痕迹"
+    },
+    "NG_ColdJoint": {
+      "来源": ["XH2"],
+      "中文": "虚焊",
+      "英文全称": "Cold / false joint (non-wetting)",
+      "confidence": "mid",
+      "工业依据": "IPC-A-610 虚焊/假焊：有焊料但未形成合金结合，受力即脱",
+      "图像证据": "引线端部挂锡球但悬空/未与焊盘结合，锡面发暗不润湿"
+    },
+    "NG_ExcessSolder": {
+      "来源": ["XH3"],
+      "中文": "过焊",
+      "英文全称": "Excess solder",
+      "confidence": "low",
+      "工业依据": "委托方标签『过焊-焊点看不见』：焊料过量或过热导致焊点形态异常",
+      "图像证据": "焊点发黑、锡形态异常，与 XH1/XH2 的『光秃/锡球』不同；可能混有『引线未压扁』",
+      "_注意": "XH3 清晰度中位最低(82.9)，含 40 张模糊图，人工重点看"
+    },
+    "NG_Misalignment": {
+      "来源": ["PW"],
+      "中文": "偏位",
+      "英文全称": "Misalignment / offset",
+      "confidence": "high",
+      "工业依据": "IPC-A-610 偏移判据（Class 2 侧向偏移 >25% 焊盘宽度即 NG）",
+      "图像证据": "引线偏离焊盘中央，压在焊盘边缘或外侧"
+    },
+    "NG_PadContamination": {
+      "来源": ["HDZ"],
+      "中文": "焊盘脏污",
+      "英文全称": "Pad contamination / residue",
+      "confidence": "high",
+      "工业依据": "委托方标签『焊点脏-看不见焊点』= AOI『污染/异物』",
+      "图像证据": "引线与焊盘间有黑色残渣，焊盘发暗"
+    },
+    "NG_PadDiscoloration": {
+      "来源": ["CX"],
+      "中文": "焊盘暗蚀",
+      "英文全称": "Pad discoloration / oxidation",
+      "confidence": "low",
+      "工业依据": "委托方标签『焊盘暗-引线脱离焊盘 / 焊盘暗-焊点不明显』= 焊盘氧化/烧蚀",
+      "图像证据": "整块焊盘发暗发灰，引线贴附但无明确焊点；仅 31 张，可能混有『引线残留』",
+      "_注意": "CX 仅 26 张可用，建议人工全看一遍"
+    }
+  },
+  "待人工确认": [
+    "CX 与 HDZ 视觉相近（都发暗）：HDZ=焊点脏(有残渣)，CX=焊盘暗(整面发暗)",
+    "XH3 可能混合『过焊』与『引线未压扁』两种标签",
+    "『引线残留』『引线未压扁』两个标签未找到独立文件夹，可能混在 CX/XH3 中"
+  ]
+}
