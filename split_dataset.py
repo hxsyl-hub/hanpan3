@@ -16,11 +16,11 @@ DATA_DIR = Path(__file__).parent / "data" / "raw" / "右焊盘"
 OUT_DIR = Path(__file__).parent / "splits"
 RATIOS = (0.7, 0.2, 0.1)
 IMG_EXTS = {".bmp", ".jpg", ".jpeg", ".png"}
-MAPPING_JSON = Path(__file__).parent / "scripts" / "类别映射.json"
+MAPPING_JSON = Path(__file__).parent / "docs" / "类别映射.json"
 
 
 def load_class_map():
-    """从 scripts/类别映射.json 反查：中文原类别名 -> 工业标准类别名"""
+    """从 docs/类别映射.json 反查：中文原类别名 -> 工业标准类别名"""
     if not MAPPING_JSON.is_file():
         print(f"[警告] 未找到 {MAPPING_JSON}，将直接使用原始目录名作为类别名")
         return {}
