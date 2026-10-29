@@ -11,6 +11,7 @@ Checks (all on CPU unless --device given):
   6. plot_curves produces all 6 figures from fake history
 Exits non-zero if any check fails.
 """
+import argparse
 import json
 import shutil
 import sys
@@ -84,13 +85,17 @@ def check_splits():
     assert not (sets["train"] & sets["val"]), "train/val overlap"
     assert not (sets["train"] & sets["test"]), "train/test overlap"
     assert not (sets["val"] & sets["test"]), "val/test overlap"
-    # 不写死总数（换数据集就失效），改为校验 7:2:1 比例是否成立
+    # 注意：train 可能已被 balance_splits.py 裁减过（多数类均衡），
+    # 那时整体比例不再是 7:2:1，用 train 占比去断言会误报。
+    # val / test 划分之后从不改动，所以用 val:test ≈ 2:1 来校验划分本身对不对。
     n_tr, n_va, n_te = (len(sets[s]) for s in ["train", "val", "test"])
     total = n_tr + n_va + n_te
-    for s, n, want in [("train", n_tr, 0.7), ("val", n_va, 0.2), ("test", n_te, 0.1)]:
-        got = n / total
-        assert abs(got - want) < 0.03, f"{s} 占比 {got:.3f} 偏离目标 {want}"
-    return f"no leakage, total={total} (train/val/test = {n_tr}/{n_va}/{n_te})"
+    assert n_va > 0 and n_te > 0, "val 或 test 为空"
+    ratio = n_va / n_te
+    assert 1.7 < ratio < 2.3, f"val:test = {ratio:.2f}，偏离 2:1，划分有问题"
+    note = "" if abs(n_tr / total - 0.7) < 0.03 else "（train 已做过类别均衡）"
+    return (f"no leakage, total={total} (train/val/test = {n_tr}/{n_va}/{n_te}, "
+            f"val:test={ratio:.2f}){note}")
 
 
 def get_mini_loaders():
@@ -165,7 +170,16 @@ def check_plots():
 
 
 def main():
+    global DATA_DIR
+    # 允许指定数据目录：云端解压到英文路径时可用，避免中文目录的编码问题
+    p = argparse.ArgumentParser()
+    p.add_argument("--data-dir", default=str(DATA_DIR),
+                   help="原始图根目录，必须与生成 splits 时所用的目录一致")
+    args = p.parse_args()
+    DATA_DIR = Path(args.data_dir)
+
     print(f"torch={torch.__version__}  cuda_available={torch.cuda.is_available()}")
+    print(f"data dir: {DATA_DIR}")
     if torch.cuda.is_available():
         print(f"gpu={torch.cuda.get_device_name(0)}")
 
