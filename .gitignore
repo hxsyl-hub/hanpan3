@@ -6,9 +6,10 @@ __pycache__/
 # 忽略数据集（体积大，已单独备份到 D:\python\备份_hanpan3_*）
 /data/
 
-# 忽略自己的运行结果
-/runs/
+# 忽略自己的运行结果（旧 runs/ 已归档到备份目录）
 /outputs/
+# 增强实验各自的输出目录（outputs_hist / outputs_flip / outputs_pretrained ...）
+/outputs_*/
 
 # 训练产出的权重与曲线
 *.pth
@@ -35,6 +36,6 @@ __pycache__/
 !docs/**/*.jpg
 !docs/**/*.csv
 
-# 清洗报告是数据处理过程的留痕，放行
-!runs/clean/*.md
-!runs/clean/*.csv
+# 清洗报告已移入 docs/（md 本身不在忽略列表内，无需额外放行）
+logs/
+
