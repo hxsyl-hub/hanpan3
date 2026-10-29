@@ -23,15 +23,54 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
+IMG_EXTS = {".bmp", ".jpg", ".jpeg", ".png"}
+
+
 class SolderDataset(Dataset):
-    def __init__(self, list_file: Path, data_dir: Path, transform):
+    """读图数据集。samples 形如 [(相对路径, 标签索引)]。
+
+    取样本有两种方式，产出的 samples 结构完全一样，后续流程无需区分：
+      from_list —— 按 splits/*.txt 清单取图（flat 布局，默认）
+      from_dir  —— 直接扫描 <类别名>/*.bmp 目录（split 布局）
+    """
+
+    def __init__(self, samples, data_dir: Path, transform):
         self.data_dir = data_dir
         self.transform = transform
-        self.samples = []
+        self.samples = samples
+
+    @classmethod
+    def from_list(cls, list_file: Path, data_dir: Path, transform):
+        samples = []
         with open(list_file, encoding="utf-8") as f:
             for line in f:
                 rel, idx = line.strip().split("\t")
-                self.samples.append((rel, int(idx)))
+                samples.append((rel, int(idx)))
+        return cls(samples, data_dir, transform)
+
+    @classmethod
+    def from_dir(cls, root: Path, classes: dict, transform):
+        """扫描 root/<类别名>/ 下的图片（ImageFolder 风格，用于 split 布局）。
+
+        标签直接取 classes.json 里的索引 —— 若按目录名排序另编一套号，
+        就会和 flat 布局的编号对不上，标签含义直接错位。
+        """
+        samples = []
+        for name, idx in sorted(classes.items(), key=lambda x: x[1]):
+            d = root / name
+            if not d.is_dir():
+                continue
+            for f in sorted(d.iterdir()):
+                if f.suffix.lower() in IMG_EXTS:
+                    samples.append((f"{name}/{f.name}", idx))
+        unknown = [d.name for d in sorted(root.iterdir())
+                   if d.is_dir() and d.name not in classes]
+        if unknown:
+            print("  ⚠ %s 下有 classes.json 里没有的类别目录 %s，已忽略"
+                  % (root, unknown))
+        if not samples:
+            raise RuntimeError("%s 下没找到任何图片，检查目录结构" % root)
+        return cls(samples, root, transform)
 
     def __len__(self):
         return len(self.samples)
@@ -195,19 +234,32 @@ def make_loaders(args):
 
     splits_dir = ROOT / "splits"
     data_dir = Path(args.data_dir)
+    with open(splits_dir / "classes.json", encoding="utf-8") as f:
+        classes = json.load(f)
     train_list = (Path(args.train_list) if args.train_list
                   else splits_dir / "train.txt")
+    if args.layout == "split" and args.train_list:
+        print("  ⚠ --layout split 直接扫描目录，--train-list 不生效"
+              "（要换训练集请改目录里的图）")
     loaders = {}
     for split in ["train", "val", "test"]:
-        list_file = train_list if split == "train" else splits_dir / f"{split}.txt"
         tf = train_tf if split == "train" else eval_tf
-        ds = SolderDataset(list_file, data_dir, tf)
+        if args.layout == "split":
+            # 物理分目录：<data_dir>/<split>/<类别名>/*.bmp，直接扫描
+            sub = data_dir / split
+            if not sub.is_dir():
+                raise RuntimeError(
+                    "--layout split 需要 %s 目录，没找到。"
+                    "先用 make_dataset_dir.py --layout split 生成" % sub)
+            ds = SolderDataset.from_dir(sub, classes, tf)
+        else:
+            list_file = (train_list if split == "train"
+                         else splits_dir / f"{split}.txt")
+            ds = SolderDataset.from_list(list_file, data_dir, tf)
         loaders[split] = DataLoader(
             ds, batch_size=args.batch_size,
             shuffle=(split == "train"),
             num_workers=args.num_workers, pin_memory=True)
-    with open(splits_dir / "classes.json", encoding="utf-8") as f:
-        classes = json.load(f)
     return loaders, classes
 
 
@@ -472,6 +524,10 @@ def main():
                    help="原始图根目录（与 split_dataset.py 的 DATA_DIR 必须一致，"
                         "因为 splits/*.txt 里存的是相对它的路径）")
     p.add_argument("--out-dir", default="outputs")
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat=按 splits/*.txt 清单取图（默认，图只存一份，"
+                        "改划分只动文本）；split=直接扫描 "
+                        "<data-dir>/{train,val,test}/<类别>/ 物理分目录")
     p.add_argument("--models", default=",".join(MODEL_NAMES),
                    help="comma-separated model names")
     p.add_argument("--epochs", type=int, default=50)

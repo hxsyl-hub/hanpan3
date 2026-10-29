@@ -79,6 +79,10 @@ def main():
     p.add_argument("--splits", default="train,val,test",
                    help="只物化指定集合，逗号分隔（数据量大时可分多次跑），"
                         "例：--splits train")
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat = out/<类别>/*.bmp，配合 splits/*.txt 清单使用；"
+                        "split = out/{train,val,test}/<类别>/*.bmp，"
+                        "物理分好目录，训练时加 --layout split")
     args = p.parse_args()
 
     data = Path(args.data_dir)
@@ -91,7 +95,9 @@ def main():
     idx2name = {i: c for c, i in classes.items()}
 
     print("原始图目录:", data)
-    print("输出目录:  ", out, "（结构与 raw 一致：<类别名>/*.bmp）")
+    layout_desc = ("<类别名>/*.bmp（配 splits 清单）" if args.layout == "flat"
+                   else "{train,val,test}/<类别名>/*.bmp（物理分目录）")
+    print("输出目录:  ", out, "（", layout_desc, "）")
     print("模式:      ", args.mode)
     print()
 
@@ -105,7 +111,11 @@ def main():
                 missing += 1
                 continue
             cls_name = idx2name.get(label, Path(rel).parts[0])
-            place(src, out / cls_name / Path(rel).name, args.mode)
+            # flat  : out/<类别>/<文件>          配 splits 清单
+            # split : out/<split>/<类别>/<文件>  物理分目录，可直接扫描
+            dst_dir = ((out / split / cls_name) if args.layout == "split"
+                       else (out / cls_name))
+            place(src, dst_dir / Path(rel).name, args.mode)
             cnt[cls_name] += 1
         n = sum(cnt.values())
         total += n
@@ -116,4 +126,7 @@ def main():
     size_mb = sum(f.stat().st_size for f in out.rglob("*")
                   if f.is_file()) / (1024 * 1024)
     print("合计 %d 张 / %.1f MB（缺失 %d 张）" % (total, size_mb, missing_all))
-    print("用法: python train.py --data-dir %s" % out)
+    cmd = "python train.py --data-dir %s" % out
+    if args.layout == "split":
+        cmd += " --layout split"
+    print("用法:", cmd)

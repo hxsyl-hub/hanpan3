@@ -48,7 +48,8 @@ def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
         transforms.ToTensor(),
         transforms.Normalize(train.IMAGENET_MEAN, train.IMAGENET_STD),
     ])
-    ds = train.SolderDataset(ROOT / "splits" / f"{split}.txt", Path(data_dir), tf)
+    ds = train.SolderDataset.from_list(
+        ROOT / "splits" / f"{split}.txt", Path(data_dir), tf)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=2,
                     pin_memory=(device == "cuda"))
 

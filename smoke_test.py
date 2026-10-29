@@ -103,7 +103,8 @@ def get_mini_loaders():
         train.transforms.Resize((224, 224)),
         train.transforms.ToTensor(),
     ])
-    ds = train.SolderDataset(ROOT / "splits" / "train.txt", DATA_DIR, transform)
+    ds = train.SolderDataset.from_list(
+        ROOT / "splits" / "train.txt", DATA_DIR, transform)
     tr = DataLoader(Subset(ds, range(16)), batch_size=4, shuffle=True)
     ev = DataLoader(Subset(ds, range(16, 24)), batch_size=4)
     return tr, ev
