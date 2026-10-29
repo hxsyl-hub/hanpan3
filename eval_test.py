@@ -28,7 +28,8 @@ import train                      # 复用 SolderDataset / build_model / 归一�
 ROOT = Path(__file__).parent
 
 
-def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
+def evaluate_one(name, split, data_dir, batch_size, device, out_dir,
+                 layout="flat"):
     ck_path = ROOT / out_dir / name / "best.pth"
     if not ck_path.is_file():
         print(f"  [跳过] {name}: 没有 {ck_path}")
@@ -48,8 +49,12 @@ def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
         transforms.ToTensor(),
         transforms.Normalize(train.IMAGENET_MEAN, train.IMAGENET_STD),
     ])
-    ds = train.SolderDataset.from_list(
-        ROOT / "splits" / f"{split}.txt", Path(data_dir), tf)
+    if layout == "split":
+        # 物理分目录：<data_dir>/<split>/<类别名>/*.bmp，直接扫描
+        ds = train.SolderDataset.from_dir(Path(data_dir) / split, classes, tf)
+    else:
+        ds = train.SolderDataset.from_list(
+            ROOT / "splits" / f"{split}.txt", Path(data_dir), tf)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=2,
                     pin_memory=(device == "cuda"))
 
@@ -143,6 +148,9 @@ def main():
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
     p.add_argument("--data-dir", default=str(ROOT / "data" / "raw" / "右焊盘"))
     p.add_argument("--out-dir", default="outputs")
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat=按 splits/*.txt 清单取图（默认）；"
+                        "split=扫描 <data-dir>/<split>/<类别>/ 物理分目录")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--device",
                    default="cuda" if torch.cuda.is_available() else "cpu")
@@ -157,7 +165,7 @@ def main():
     for name in [m.strip() for m in args.models.split(",") if m.strip()]:
         print(f"评估 {name} ...")
         r = evaluate_one(name, args.split, args.data_dir, args.batch_size,
-                         device, args.out_dir)
+                         device, args.out_dir, args.layout)
         if r:
             results.append(r)
             extra = (f" | 严重缺陷漏检率 {r['severe_miss']:.4f}"
