@@ -53,19 +53,26 @@ def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
                     pin_memory=(device == "cuda"))
 
     cm = np.zeros((n, n), dtype=np.int64)
+    all_pred, all_true = [], []
     with torch.no_grad():
         for images, targets in dl:
             out = model(images.to(device))
             if not torch.is_tensor(out):          # googlenet 可能返回辅助输出
                 out = out.logits
-            pred = out.argmax(1).cpu().numpy()
-            for t, p in zip(targets.numpy(), pred):
+            pred = out.argmax(1).cpu()
+            for t, p in zip(targets.numpy(), pred.numpy()):
                 cm[t, p] += 1
+            all_pred.append(pred)
+            all_true.append(targets)
 
     total = cm.sum()
     acc = float(np.trace(cm) / total) if total else 0.0
-    support = cm.sum(axis=1)
-    per = np.array([cm[i, i] / support[i] if support[i] else 0.0 for i in range(n)])
+    # 复用 train.py 里的同一套算法，保证训练日志与单独评估的口径完全一致
+    rows, _ = train.compute_class_metrics(
+        torch.cat(all_pred), torch.cat(all_true), n)
+    support = np.array([r["support"] for r in rows])
+    per = np.array([r["acc"] for r in rows])
+    sev = [i for i, c in enumerate(order) if c in train.SEVERE_CLASSES]
 
     # 保存结果
     out_path = ROOT / out_dir / name
@@ -73,11 +80,21 @@ def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
     with open(out_path / f"eval_{split}.csv", "w", newline="",
               encoding="utf-8-sig") as f:
         w = csv.writer(f)
-        w.writerow(["类别", "支持数", "ACC"])
+        w.writerow(["类别", "严重缺陷", "支持数", "ACC", "精确率", "召回率",
+                    "漏检率", "F1"])
         for i, c in enumerate(order):
-            w.writerow([c, int(support[i]), f"{per[i]:.4f}"])
-        w.writerow(["__总体ACC__", int(total), f"{acc:.4f}"])
-        w.writerow(["__宏平均ACC__", "", f"{per.mean():.4f}"])
+            r = rows[i]
+            w.writerow([c, "★" if c in train.SEVERE_CLASSES else "",
+                        r["support"], f"{r['acc']:.4f}", f"{r['precision']:.4f}",
+                        f"{r['recall']:.4f}", f"{r['miss_rate']:.4f}",
+                        f"{r['f1']:.4f}"])
+        w.writerow(["__总体ACC__", "", int(total), f"{acc:.4f}", "", "", "", ""])
+        w.writerow(["__宏平均ACC__", "", "", f"{per.mean():.4f}", "", "", "", ""])
+        if sev:
+            w.writerow(["__严重缺陷平均__", "", "", "", "",
+                        f"{np.mean([rows[i]['recall'] for i in sev]):.4f}",
+                        f"{np.mean([rows[i]['miss_rate'] for i in sev]):.4f}",
+                        ""])
 
     lines = [
         f"# {name} 在 {split} 集上的评估",
@@ -86,12 +103,22 @@ def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
         f"当时 val_acc = {ck.get('best_val_acc', 0):.4f}）",
         f"- 数据：`splits/{split}.txt`，共 {total} 张",
         f"- 总体 ACC：**{acc:.4f}**   宏平均 ACC：**{per.mean():.4f}**",
-        "",
-        "| 类别 | 支持数 | ACC |",
-        "| --- | --- | --- |",
     ]
+    if sev:
+        lines.append(
+            f"- 严重缺陷（{' / '.join(train.SEVERE_CLASSES)}）："
+            f"平均召回率 **{np.mean([rows[i]['recall'] for i in sev]):.4f}**，"
+            f"平均漏检率 **{np.mean([rows[i]['miss_rate'] for i in sev]):.4f}**")
+    lines += ["",
+              "| 类别 | 支持数 | ACC | 精确率 | 召回率 | 漏检率 | F1 |",
+              "| --- | --- | --- | --- | --- | --- | --- |"]
     for i, c in enumerate(order):
-        lines.append(f"| {c} | {int(support[i])} | {per[i]:.4f} |")
+        r = rows[i]
+        mark = " ★" if c in train.SEVERE_CLASSES else ""
+        thin = " ⚠样本少" if r["support"] < 10 else ""
+        lines.append(f"| {c}{mark} | {r['support']} | {r['acc']:.4f} | "
+                     f"{r['precision']:.4f} | {r['recall']:.4f} | "
+                     f"{r['miss_rate']:.4f} | {r['f1']:.4f} |{thin}")
     lines += ["", "## 混淆矩阵（行=真实，列=预测）", "",
               "| 真实\\预测 | " + " | ".join(order) + " |",
               "| --- | " + " | ".join(["---"] * n) + " |"]
@@ -100,7 +127,12 @@ def evaluate_one(name, split, data_dir, batch_size, device, out_dir):
     (out_path / f"eval_{split}.md").write_text("\n".join(lines), encoding="utf-8")
 
     return {"model": name, "acc": acc, "macro": float(per.mean()),
-            "per": per, "support": support, "order": order, "total": int(total)}
+            "per": per, "support": support, "order": order, "total": int(total),
+            "rows": rows,
+            "severe_recall": (float(np.mean([rows[i]["recall"] for i in sev]))
+                              if sev else None),
+            "severe_miss": (float(np.mean([rows[i]["miss_rate"] for i in sev]))
+                            if sev else None)}
 
 
 def main():
@@ -127,18 +159,26 @@ def main():
                          device, args.out_dir)
         if r:
             results.append(r)
-            print(f"  总体 ACC {r['acc']:.4f} | 宏平均 {r['macro']:.4f} "
+            extra = (f" | 严重缺陷漏检率 {r['severe_miss']:.4f}"
+                     if r["severe_miss"] is not None else "")
+            print(f"  总体 ACC {r['acc']:.4f} | 宏平均 {r['macro']:.4f}{extra} "
                   f"→ {args.out_dir}/{name}/eval_{args.split}.md")
 
     if len(results) > 1:
-        print("\n" + "=" * 74)
+        print("\n" + "=" * 86)
         print(f"{args.split} 集对比（按总体 ACC 降序）")
-        print("=" * 74)
-        print("%-16s %12s %14s" % ("模型", "总体 ACC", "宏平均 ACC"))
-        print("-" * 74)
+        print("=" * 86)
+        print("%-16s %10s %11s %15s %15s"
+              % ("模型", "总体ACC", "宏平均ACC", "严重缺陷召回", "严重缺陷漏检"))
+        print("-" * 86)
         for r in sorted(results, key=lambda x: -x["acc"]):
-            print("%-16s %12.4f %14.4f" % (r["model"], r["acc"], r["macro"]))
-        print("=" * 74)
+            sr = "n/a" if r["severe_recall"] is None else f"{r['severe_recall']:.4f}"
+            sm = "n/a" if r["severe_miss"] is None else f"{r['severe_miss']:.4f}"
+            print("%-16s %10.4f %11.4f %15s %15s"
+                  % (r["model"], r["acc"], r["macro"], sr, sm))
+        print("=" * 86)
+        print("严重缺陷 = " + " / ".join(train.SEVERE_CLASSES))
+        print("工业验收更看重漏检率（把缺陷判成合格），选模型时优先看最后两列")
 
 
 if __name__ == "__main__":
