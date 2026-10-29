@@ -70,17 +70,58 @@ def forward_logits(model, images):
     return out
 
 
+def exp_out_root(args) -> Path:
+    """实验输出根目录：按"训练集怎么来的"自动加后缀。
+
+    不加这个的话，跑增强实验会直接写进 outputs/<模型>/ 把基线的
+    history.json、best.pth 覆盖掉，之后想对比都没了。
+      基线      -> outputs/
+      在线增强  -> outputs_online/
+      离线增强  -> outputs_train_aug/   （--train-list 指向 train_aug.txt 时）
+    """
+    suffix = "" if args.augment == "none" else f"_{args.augment}"
+    if args.train_list:
+        suffix += "_" + Path(args.train_list).stem
+    return ROOT / (args.out_dir.rstrip("/\\") + suffix)
+
+
 def make_loaders(args):
-    transform = transforms.Compose([
+    """构建三个 DataLoader。
+
+    对比实验的公平性由这里保证，有两条铁律：
+      1. val / test 的清单永远取 splits/ 下那份，预处理永远不含任何随机变换；
+      2. 只有训练集可以被换掉或加增强（--train-list / --augment）。
+    这样无论训练集怎么增强，评估口径始终一致，实验结果才能横向对比。
+    """
+    eval_tf = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
+    if args.augment == "online":
+        # 在线增强：只在训练时随机变换，每个 epoch 看到的图都不一样（不写盘）
+        train_tf = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomRotation(degrees=15),
+            transforms.ColorJitter(brightness=0.25, contrast=0.25,
+                                   saturation=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        ])
+    else:
+        train_tf = eval_tf            # 基线：与评估口径完全一致，不做任何增强
+
     splits_dir = ROOT / "splits"
     data_dir = Path(args.data_dir)
+    train_list = (Path(args.train_list) if args.train_list
+                  else splits_dir / "train.txt")
     loaders = {}
     for split in ["train", "val", "test"]:
-        ds = SolderDataset(splits_dir / f"{split}.txt", data_dir, transform)
+        list_file = train_list if split == "train" else splits_dir / f"{split}.txt"
+        tf = train_tf if split == "train" else eval_tf
+        ds = SolderDataset(list_file, data_dir, tf)
         loaders[split] = DataLoader(
             ds, batch_size=args.batch_size,
             shuffle=(split == "train"),
@@ -145,7 +186,7 @@ def count_params(model):
 
 
 def train_model(name, args, loaders, classes, device):
-    out_dir = ROOT / args.out_dir / name
+    out_dir = exp_out_root(args) / name
     out_dir.mkdir(parents=True, exist_ok=True)
     num_classes = len(classes)
 
@@ -257,6 +298,13 @@ def main():
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--augment", default="none", choices=["none", "online"],
+                   help="none=基线，不做任何增强（默认）；"
+                        "online=训练集在线随机增强。两者都不影响 val/test 的口径")
+    p.add_argument("--train-list", default=None,
+                   help="训练集清单，默认 splits/train.txt。"
+                        "离线增强实验可指向 train_aug.txt（只加训练图），"
+                        "val/test 仍固定取 splits/ 下那份，保证结果可比")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--num-workers", type=int, default=4)
@@ -264,6 +312,9 @@ def main():
 
     device = torch.device(args.device)
     print(f"device={device}  epochs={args.epochs}  batch={args.batch_size}  lr={args.lr}")
+    print(f"augment={args.augment}  训练集清单={args.train_list or 'splits/train.txt'}")
+    print(f"实验输出目录: {exp_out_root(args)}"
+          f"  （增强方式不同会自动分开存，不会覆盖之前的结果）")
     loaders, classes = make_loaders(args)
     print("classes:", list(classes))
 
@@ -271,7 +322,7 @@ def main():
     for name in [m.strip() for m in args.models.split(",") if m.strip()]:
         results.append(train_model(name, args, loaders, classes, device))
 
-    summary_path = ROOT / args.out_dir / "summary.csv"
+    summary_path = exp_out_root(args) / "summary.csv"
     with open(summary_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(results[0].keys()))
         w.writeheader()
