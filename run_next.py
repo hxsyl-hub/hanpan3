@@ -107,7 +107,11 @@ def ensure_aug_list(args) -> bool:
         return False
     print("  → 未找到 splits/train_aug.txt，先生成离线增强图 ...")
     cmd = [sys.executable, "make_offline_aug.py",
-           "--data-dir", args.data_dir, "--ratio", str(args.aug_ratio)]
+           "--data-dir", args.data_dir, "--ratio", str(args.aug_ratio),
+           # 布局必须跟着传：漏了的话 make_offline_aug 会按 flat 找
+           # <data-dir>/<中文类名>/<文件>，split 布局下全找不到，
+           # 结果是增强图一张没生成、train_aug.txt 与 train.txt 一样
+           "--layout", args.layout]
     r = subprocess.run(cmd, cwd=str(ROOT))
     return r.returncode == 0 and aug_list.is_file()
 
