@@ -40,6 +40,12 @@ def num_classes():
 
 ROOT = Path(__file__).parent
 RESULTS = []
+LAYOUT = "flat"          # flat=按 splits 清单取图；split=扫描物理分目录
+
+
+def split_root(split):
+    """某个 split 的图片根目录（取决于布局）"""
+    return DATA_DIR / split if LAYOUT == "split" else DATA_DIR
 
 
 def check(name, fn):
@@ -54,16 +60,25 @@ def check(name, fn):
 
 
 def check_dataset():
-    classes = sorted(d.name for d in DATA_DIR.iterdir() if d.is_dir())
+    # flat : data_dir/<类别>/
+    # split: data_dir/{train,val,test}/<类别>/
+    roots = ([DATA_DIR / s for s in ["train", "val", "test"]
+              if (DATA_DIR / s).is_dir()] if LAYOUT == "split"
+             else [DATA_DIR])
+    assert roots, f"{DATA_DIR} 下没找到图片目录，检查 --data-dir 与 --layout"
+    classes = sorted({d.name for r in roots for d in r.iterdir() if d.is_dir()})
     assert len(classes) >= 2, f"类别太少: {len(classes)}: {classes}"
     total = 0
-    for cls in classes:
-        files = [p for p in (DATA_DIR / cls).iterdir() if p.suffix.lower() in IMG_EXTS]
-        assert files, f"no images in {cls}"
-        for p in files[:2]:
-            img = Image.open(p)
-            img.load()
-        total += len(files)
+    for r in roots:
+        for cls in classes:
+            d = r / cls
+            if not d.is_dir():
+                continue
+            files = [p for p in d.iterdir() if p.suffix.lower() in IMG_EXTS]
+            for p in files[:2]:
+                Image.open(p).load()
+            total += len(files)
+    assert total, "一个图片都没读到"
     return f"{len(classes)} classes, {total} images total"
 
 
@@ -74,9 +89,20 @@ def check_splits():
         rows = (splits_dir / f"{split}.txt").read_text(encoding="utf-8").splitlines()
         assert rows, f"{split}.txt is empty"
         rels, labels = [], []
+        idx2name = None
         for line in rows:
             rel, idx = line.split("\t")
-            assert (DATA_DIR / rel).exists(), f"missing file: {rel}"
+            if LAYOUT == "split":
+                # 物理分目录里存的是工业类名，清单里是中文原始名，
+                # 靠标签索引反查出工业名再拼路径
+                if idx2name is None:
+                    idx2name = {v: k for k, v in json.loads(
+                        (splits_dir / "classes.json").read_text(
+                            encoding="utf-8")).items()}
+                p = DATA_DIR / split / idx2name[int(idx)] / Path(rel).name
+            else:
+                p = DATA_DIR / rel
+            assert p.exists(), f"missing file: {p}"
             rels.append(rel)
             labels.append(int(idx))
         sets[split] = set(rels)
@@ -103,8 +129,13 @@ def get_mini_loaders():
         train.transforms.Resize((224, 224)),
         train.transforms.ToTensor(),
     ])
-    ds = train.SolderDataset.from_list(
-        ROOT / "splits" / "train.txt", DATA_DIR, transform)
+    if LAYOUT == "split":
+        classes = json.loads(
+            (ROOT / "splits" / "classes.json").read_text(encoding="utf-8"))
+        ds = train.SolderDataset.from_dir(DATA_DIR / "train", classes, transform)
+    else:
+        ds = train.SolderDataset.from_list(
+            ROOT / "splits" / "train.txt", DATA_DIR, transform)
     tr = DataLoader(Subset(ds, range(16)), batch_size=4, shuffle=True)
     ev = DataLoader(Subset(ds, range(16, 24)), batch_size=4)
     return tr, ev
@@ -171,13 +202,17 @@ def check_plots():
 
 
 def main():
-    global DATA_DIR
+    global DATA_DIR, LAYOUT
     # 允许指定数据目录：云端解压到英文路径时可用，避免中文目录的编码问题
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir", default=str(DATA_DIR),
                    help="原始图根目录，必须与生成 splits 时所用的目录一致")
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat=按 splits/*.txt 清单取图（默认）；"
+                        "split=扫描 <data-dir>/{train,val,test}/<类别>/ 物理分目录")
     args = p.parse_args()
     DATA_DIR = Path(args.data_dir)
+    LAYOUT = args.layout
 
     print(f"torch={torch.__version__}  cuda_available={torch.cuda.is_available()}")
     print(f"data dir: {DATA_DIR}")
