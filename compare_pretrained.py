@@ -48,7 +48,7 @@ def train_variant(variant, args, loaders, classes, device):
     torch.manual_seed(args.seed)  # identical batch order for both variants
     model = build_googlenet(pretrained=(variant == "pretrained"),
                             num_classes=len(classes)).to(device)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     history = {"model": f"googlenet_{variant}",
@@ -164,6 +164,19 @@ def main():
     p.add_argument("--patience", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--label-smoothing", type=float, default=0.0,
+                   help="标签平滑系数，默认 0。与 train.py 保持同一接口，"
+                        "使对比结果可与其它实验横向比较")
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat=按 splits/*.txt 清单取图（默认）；split=扫描 "
+                        "<data-dir>/{train,val,test}/<类别>/ 物理分目录。"
+                        "make_loaders 会读这个参数，缺了会直接报错")
+    p.add_argument("--augment", default="none",
+                   choices=["none", "hist", "flip", "rotate", "blur", "online"],
+                   help="预训练对比实验保持 none（与基线口径一致）；"
+                        "make_loaders 会读这个参数")
+    p.add_argument("--train-list", default=None,
+                   help="make_loaders 会读这个参数，默认不用传")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--num-workers", type=int, default=4)
