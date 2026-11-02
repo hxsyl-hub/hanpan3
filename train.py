@@ -164,6 +164,7 @@ def exp_out_root(args) -> Path:
       离线增强    -> outputs_train_aug/  （--train-list 指向 train_aug.txt 时）
       预训练      -> outputs_pretrained/
       预训练+冻结 -> outputs_pretrained_freeze/
+      标签平滑    -> 再追加 _ls0.1（例：outputs_online_ls0.1/）
     """
     suffix = "" if args.augment == "none" else f"_{args.augment}"
     if args.train_list:
@@ -172,6 +173,8 @@ def exp_out_root(args) -> Path:
         suffix += "_pretrained"
     if args.freeze:
         suffix += "_freeze"
+    if args.label_smoothing > 0:
+        suffix += f"_ls{args.label_smoothing}"
     return ROOT / (args.out_dir.rstrip("/\\") + suffix)
 
 
@@ -366,7 +369,10 @@ def train_model(name, args, loaders, classes, device):
             print("  ⚠ --freeze 未配合 --pretrained：骨干是随机初始化的，"
                   "冻住之后只剩一个随机分类头在学，结果没有意义。")
         trainable_M = freeze_backbone(model, name) / 1e6
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    if args.label_smoothing > 0:
+        print("  标签平滑 label_smoothing = %s（抑制过拟合：不让模型对"
+              "训练样本过度自信）" % args.label_smoothing)
     # 冻结时只把需要梯度的参数交给优化器，否则 AdamW 也会为冻结参数建立动量状态
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad], lr=args.lr)
@@ -538,6 +544,11 @@ def main():
                    help="训练集在线增强。文档要求“根据黑白图的特点，每次只选其一”，"
                         "所以 hist/flip/rotate/blur 各自只启用一种变换，用于消融对比；"
                         "online 是几种叠加的对照组。都不影响 val/test 的口径")
+    p.add_argument("--label-smoothing", type=float, default=0.0,
+                   help="标签平滑系数，默认 0（即普通交叉熵）。常用 0.1："
+                        "把硬标签 1 软化成 1-0.1、其余类各分到 0.1/n，"
+                        "让模型别对训练样本过度自信，从而抑制过拟合。"
+                        "输出目录会追加 _ls<值>，不会覆盖基线结果")
     p.add_argument("--pretrained", action="store_true",
                    help="加载 ImageNet 预训练权重（基线对比不要加；"
                         "文档步骤2 用它对比有无预训练的差异）")

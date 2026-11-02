@@ -93,6 +93,10 @@ def main():
     p.add_argument("--small-ratio", type=float, default=0.2,
                    help="低于最大类的这个比例才算小类（默认 0.2）")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat=按 splits/*.txt 清单取图（默认）；split=扫描 "
+                        "<data-dir>/{train,val,test}/<类别>/ 物理分目录，"
+                        "增强图直接写进 train/<类别>/ 供扫描时自动纳入")
     p.add_argument("--dry-run", action="store_true", help="只算数量，不写盘")
     args = p.parse_args()
 
@@ -123,13 +127,20 @@ def main():
         srcs = sorted(by_cls[i])
         for k in range(need):
             src_rel = srcs[k % len(srcs)]          # 循环取原图，保证每张都用到
-            src = data_dir / src_rel
             sp = Path(src_rel)
+            if args.layout == "split":
+                # 物理分目录：图在 <data_dir>/train/<工业类名>/ 下，
+                # 增强图也直接写进这里，from_dir 扫描时会自动包含
+                cls_dir = data_dir / "train" / idx2cls[i]
+                src = cls_dir / sp.name
+            else:
+                cls_dir = data_dir / sp.parent
+                src = data_dir / src_rel
             op_name = OPS[k % len(OPS)].__name__[3:]      # op_hist -> hist
             round_no = k // len(srcs) + 1
             name = f"{sp.stem}_aug{round_no}_{op_name}{sp.suffix}"
-            dst_rel = (sp.parent / name).as_posix()
-            plan.append((i, src, data_dir / dst_rel, dst_rel))
+            dst = cls_dir / name
+            plan.append((i, src, dst, dst.relative_to(data_dir).as_posix()))
 
     print(f"\n计划生成 {len(plan)} 张增强图（每类增加 {args.ratio:.0%}）")
     if args.dry_run:

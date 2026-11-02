@@ -67,7 +67,7 @@ EXPERIMENTS = [
 NEEDS_AUG_LIST = {e["id"] for e in EXPERIMENTS if e["train_list"]}
 
 
-def out_root_for(exp, base_out: str) -> Path:
+def out_root_for(exp, base_out: str, ls: float = 0.0) -> Path:
     """预测该实验的输出根目录 —— 与 train.exp_out_root 的规则保持一致。
 
     如果以后改了 train.py 里的命名规则，这里也要跟着改，否则汇总时找不到目录。
@@ -79,6 +79,8 @@ def out_root_for(exp, base_out: str) -> Path:
         suffix += "_pretrained"
     if exp["freeze"]:
         suffix += "_freeze"
+    if ls > 0:
+        suffix += "_ls%s" % ls
     return ROOT / (base_out.rstrip("/\\") + suffix)
 
 
@@ -117,6 +119,8 @@ def build_cmd(exp, args):
            "--epochs", str(args.epochs),
            "--batch-size", str(args.batch_size),
            "--lr", str(args.lr),
+           "--label-smoothing", str(args.label_smoothing),
+           "--layout", args.layout,
            "--out-dir", args.out_dir,
            "--augment", exp["augment"]]
     if exp["train_list"]:
@@ -154,7 +158,7 @@ def summarize(args, model):
     """读各组 history.json 的 best 轮指标，汇总成一张对比表。"""
     rows = []
     for exp in EXPERIMENTS:
-        root = out_root_for(exp, args.out_dir)
+        root = out_root_for(exp, args.out_dir, args.label_smoothing)
         h = root / model / "history.json"
         if not h.is_file():
             rows.append((exp["id"], exp["group"], exp["desc"], None, None,
@@ -215,6 +219,12 @@ def main():
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--label-smoothing", type=float, default=0.0,
+                   help="标签平滑系数，默认 0（普通 CE）。常用 0.1，用于抑制过拟合；"
+                        "输出目录会追加 _ls<值>，不会覆盖已有的实验结果")
+    p.add_argument("--layout", default="flat", choices=["flat", "split"],
+                   help="flat=按 splits/*.txt 清单取图（默认）；split=扫描 "
+                        "<data-dir>/{train,val,test}/<类别>/ 物理分目录")
     p.add_argument("--out-dir", default="outputs",
                    help="输出根目录名，每组实验会自动加后缀区分")
     p.add_argument("--aug-ratio", type=float, default=0.5,
@@ -259,13 +269,13 @@ def main():
 
     print("\n共 %d 组实验：" % len(todo))
     for i, exp in enumerate(todo, 1):
-        root = out_root_for(exp, args.out_dir)
+        root = out_root_for(exp, args.out_dir, args.label_smoothing)
         print("  %d. %-4s %-16s %-26s → %s/" % (i, exp["id"], exp["group"],
                                                  exp["desc"], root.name))
 
     results = []
     for i, exp in enumerate(todo, 1):
-        root = out_root_for(exp, args.out_dir)
+        root = out_root_for(exp, args.out_dir, args.label_smoothing)
         first_model = [m.strip() for m in args.models.split(",")
                        if m.strip()][0]
         print("\n[%d/%d] %s  %s —— %s"
